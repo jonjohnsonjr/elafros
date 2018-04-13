@@ -18,9 +18,11 @@ package revision
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/elafros/elafros/pkg/apis/ela"
@@ -43,6 +45,11 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
+
+	"cloud.google.com/go/compute/metadata"
+	"github.com/google/go-containerregistry/authn"
+	"github.com/google/go-containerregistry/name"
+	"github.com/google/go-containerregistry/v1/remote"
 
 	buildv1alpha1 "github.com/elafros/elafros/pkg/apis/build/v1alpha1"
 	"github.com/elafros/elafros/pkg/apis/ela/v1alpha1"
@@ -80,6 +87,8 @@ const (
 	serviceTimeoutDuration = 5 * time.Minute
 
 	sidecarIstioInjectAnnotation = "sidecar.istio.io/inject"
+
+	defaultTokenSuffix = "instance/service-accounts/default/token"
 )
 
 var (
@@ -361,6 +370,11 @@ func (c *Controller) syncHandler(key string) error {
 	}
 	// Don't modify the informer's copy.
 	rev = rev.DeepCopy()
+	digest, err := resolveToDigest(rev.Spec.Container.Image)
+	if err != nil {
+		return fmt.Errorf("resolveToDigest: %v", err)
+	}
+	rev.Spec.Container.Image = digest
 
 	if rev.Spec.BuildName != "" {
 		if done, failed := isBuildDone(rev); !done {
@@ -713,6 +727,68 @@ func (c *Controller) deleteDeployment(rev *v1alpha1.Revision, ns string) error {
 	return nil
 }
 
+func getToken() (string, error) {
+	var token struct {
+		AccessToken string `json:"access_token"`
+	}
+
+	resp, err := metadata.Get(defaultTokenSuffix)
+	if err != nil {
+		return "", fmt.Errorf("metadata.Get: %v", err)
+	}
+
+	if err := json.Unmarshal([]byte(resp), &token); err != nil {
+		return "", fmt.Errorf("json Unmarshal: %v", err)
+	}
+	if token.AccessToken == "" {
+		return "", fmt.Errorf("empty access token: %v", token)
+	}
+	return token.AccessToken, nil
+}
+
+func resolveToDigest(image string) (string, error) {
+	_, err := name.NewDigest(image, name.WeakValidation)
+	if err == nil {
+		// It's already a digest, just return it.
+		return image, nil
+	}
+
+	tag, err := name.NewTag(image, name.WeakValidation)
+	if err != nil {
+		return "", err
+	}
+
+	log.Printf(tag.String())
+
+	// TODO: Cache this?
+	token, err := getToken()
+	if err != nil {
+		return "", err
+	}
+
+	log.Printf(token)
+
+	// auth := &authn.Basic{
+	// 	Username: "oauth2accesstoken",
+	// 	Password: token,
+	// }
+
+	auth := authn.Anonymous
+	i, err := remote.Image(tag, auth, http.DefaultTransport)
+	if err != nil {
+		return "", err
+	}
+
+	hash, err := i.Digest()
+	if err != nil {
+		return "", fmt.Errorf("remote.Digest: %v", err)
+	}
+
+	log.Printf(hash.String())
+
+	return fmt.Sprintf("%s@%s", tag.Context(), hash), nil
+}
+
 func (c *Controller) reconcileDeployment(rev *v1alpha1.Revision, ns string) error {
 	//TODO(grantr): migrate this to AppsV1 when it goes GA. See
 	// https://kubernetes.io/docs/reference/workloads-18-19.
@@ -730,6 +806,14 @@ func (c *Controller) reconcileDeployment(rev *v1alpha1.Revision, ns string) erro
 		log.Printf("Found existing deployment %q", deploymentName)
 		return nil
 	}
+
+	// Don't modify the informer's copy.
+	rev = rev.DeepCopy()
+	digest, err := resolveToDigest(rev.Spec.Container.Image)
+	if err != nil {
+		return fmt.Errorf("resolveToDigest: %v", err)
+	}
+	rev.Spec.Container.Image = digest
 
 	// Create the deployment.
 	controllerRef := metav1.NewControllerRef(rev, controllerKind)
