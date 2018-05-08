@@ -377,17 +377,23 @@ func (c *Controller) routeDomain(route *v1alpha1.Route) string {
 // block of the Route and returns the updated one.
 func (c *Controller) syncTrafficTargetsAndUpdateRouteStatus(route *v1alpha1.Route) (*v1alpha1.Route, error) {
 	c.consolidateTrafficTargets(route)
+	// TODO(me): https://github.com/elafros/elafros/issues/495#issuecomment-378423226
+	// Can I just mutate the config/revision in the configMap/revMap to communicate
+	// the NotFound-ness of each resource? Where can I update the route.status.conditions?
 	configMap, revMap, err := c.getDirectTrafficTargets(route)
 	if err != nil {
 		return nil, err
 	}
+	// TODO(me): ConfigurationMissing?
 	if err := c.extendConfigurationsWithIndirectTrafficTargets(route, configMap, revMap); err != nil {
 		return nil, err
 	}
+	// TODO(me): RevisionMissing?
 	if err := c.extendRevisionsWithIndirectTrafficTargets(route, configMap, revMap); err != nil {
 		return nil, err
 	}
 
+	// TODO(me): Ask yanweiguo about what these labels are for.
 	if err := c.deleteLabelForOutsideOfGivenConfigurations(route, configMap); err != nil {
 		return nil, err
 	}
@@ -401,6 +407,9 @@ func (c *Controller) syncTrafficTargetsAndUpdateRouteStatus(route *v1alpha1.Rout
 	if err := c.setLabelForGivenRevisions(route, revMap); err != nil {
 		return nil, err
 	}
+
+	// TODO(me): Nothing? This is probably fine to leave alone per:
+	// https://github.com/elafros/elafros/issues/495#issuecomment-379040240
 
 	// Then create the actual route rules.
 	glog.Info("Creating Istio route rules")
@@ -490,6 +499,7 @@ func (c *Controller) getDirectTrafficTargets(route *v1alpha1.Route) (
 			config, err := configClient.Get(configName, metav1.GetOptions{})
 			if err != nil {
 				glog.Infof("Failed to fetch Configuration %q: %v", configName, err)
+				// TODO(me): https://github.com/elafros/elafros/blob/master/docs/spec/errors.md#configuration-not-found-by-route
 				return nil, nil, err
 			}
 			configMap[configName] = config
@@ -498,6 +508,7 @@ func (c *Controller) getDirectTrafficTargets(route *v1alpha1.Route) (
 			rev, err := revClient.Get(revName, metav1.GetOptions{})
 			if err != nil {
 				glog.Infof("Failed to fetch Revision %q: %v", revName, err)
+				// TODO(me): https://github.com/elafros/elafros/blob/master/docs/spec/errors.md#revision-not-found-by-route
 				return nil, nil, err
 			}
 			revMap[revName] = rev
