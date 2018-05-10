@@ -1,8 +1,8 @@
 # Error Conditions and Reporting
 
-Elafros uses the standard Kubernetes API pattern for reporting
-configuration errors and current state of the system by writing the
-report in the `status` section. There are two mechanisms commonly used
+Elafros uses the [standard Kubernetes API pattern](https://github.com/kubernetes/community/blob/master/contributors/devel/api-conventions.md#typical-status-properties)
+for reporting configuration errors and current state of the system by writing
+the report in the `status` section. There are two mechanisms commonly used
 in status:
 
 * conditions represent true/false statements about the current state
@@ -20,7 +20,7 @@ Conditions provide an easy mechanism for client user interfaces to
 indicate the current state of resources to a user. Elafros resources
 should follow these patterns:
 
-1. Each resource should define a small number of success conditions as
+1. Each resource should define a small number of *success* conditions as
    Types. This should bias towards fewer than 5 high-level progress
    categories which are separate and meaningful for customers. For a
    Revision, these might be `BuildSucceeded`, `ResourcesAvailable` and
