@@ -547,11 +547,20 @@ func updateGeneration(patches *[]jsonpatch.JsonPatchOperation, old GenericCRD, n
 			return err
 		}
 		glog.Infof("Specs differ:\n%+v\n", string(specPatchesJSON))
-		*patches = append(*patches, jsonpatch.JsonPatchOperation{
-			Operation: "replace",
-			Path:      "/spec/generation",
-			Value:     oldGeneration + 1,
-		})
+		if newGeneration := new.GetGeneration(); newGeneration == 0 {
+			// TODO: This is stupid, how do I avoid it?
+			*patches = append(*patches, jsonpatch.JsonPatchOperation{
+				Operation: "add",
+				Path:      "/spec/generation",
+				Value:     oldGeneration + 1,
+			})
+		} else {
+			*patches = append(*patches, jsonpatch.JsonPatchOperation{
+				Operation: "replace",
+				Path:      "/spec/generation",
+				Value:     oldGeneration + 1,
+			})
+		}
 		return nil
 	}
 	glog.Infof("No changes in the spec, not bumping generation...")

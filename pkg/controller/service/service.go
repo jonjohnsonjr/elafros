@@ -281,6 +281,12 @@ func (c *Controller) updateServiceEvent(key string) error {
 	// Don't modify the informers copy
 	service = service.DeepCopy()
 
+	if service.GetGeneration() == service.Status.ObservedGeneration {
+		glog.Infof("Skipping reconcile since already reconciled %d == %d",
+			service.Spec.Generation, service.Status.ObservedGeneration)
+		return nil
+	}
+
 	glog.Infof("Running reconcile Service for %s\n%+v\n", service.Name, service)
 
 	config := MakeServiceConfiguration(service)
@@ -291,10 +297,21 @@ func (c *Controller) updateServiceEvent(key string) error {
 	// TODO: If revision is specified, check that the revision is ready before
 	// switching routes to it. Though route controller might just do the right thing?
 
-	route := MakeServiceRoute(service, config.Name)
-	return c.reconcileRoute(route)
+	glog.Infof("need to update status now I think")
 
-	// TODO: update status appropriately.
+	route := MakeServiceRoute(service, config.Name)
+	if err := c.reconcileRoute(route); err != nil {
+		return err
+	}
+
+	service.Status.ObservedGeneration = service.Spec.Generation
+
+	if _, err = c.updateStatus(service); err != nil {
+		glog.Errorf("Failed to update the service %s", err)
+		return err
+	}
+
+	return nil
 }
 
 func (c *Controller) updateStatus(service *v1alpha1.Service) (*v1alpha1.Service, error) {
@@ -315,6 +332,8 @@ func (c *Controller) updateStatus(service *v1alpha1.Service) (*v1alpha1.Service,
 func (c *Controller) reconcileConfiguration(config *v1alpha1.Configuration) error {
 	configClient := c.elaclientset.ElafrosV1alpha1().Configurations(config.Namespace)
 
+	glog.Infof("Running reconcile Configuration for %s\n%+v\n", config.Name, config)
+
 	existing, err := configClient.Get(config.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrs.IsNotFound(err) {
@@ -332,6 +351,8 @@ func (c *Controller) reconcileConfiguration(config *v1alpha1.Configuration) erro
 
 func (c *Controller) reconcileRoute(route *v1alpha1.Route) error {
 	routeClient := c.elaclientset.ElafrosV1alpha1().Routes(route.Namespace)
+
+	glog.Infof("Running reconcile Route for %s\n%+v\n", route.Name, route)
 
 	existing, err := routeClient.Get(route.Name, metav1.GetOptions{})
 	if err != nil {

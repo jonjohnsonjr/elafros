@@ -657,6 +657,7 @@ func (c *Controller) addDeploymentProgressEvent(obj interface{}) {
 	revName := deployment.Name
 	namespace := deployment.Namespace
 
+	// TODO: https://github.com/kubernetes/sample-controller/blob/master/controller.go#L373
 	rev, err := c.lister.Revisions(namespace).Get(revName)
 	if err != nil {
 		glog.Errorf("Error fetching revision '%s/%s': %v", namespace, revName, err)
