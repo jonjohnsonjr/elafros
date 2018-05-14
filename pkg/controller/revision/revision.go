@@ -653,6 +653,12 @@ func (c *Controller) addDeploymentProgressEvent(obj interface{}) {
 		return
 	}
 
+	// If this deployment is not owned by a Revision, we should not do anything more with it.
+	ownerRef := metav1.GetControllerOf(deployment)
+	if ownerRef == nil || ownerRef.Kind != "Revision" {
+		return
+	}
+
 	//Get the handle of Revision in context
 	revName := deployment.Name
 	namespace := deployment.Namespace
