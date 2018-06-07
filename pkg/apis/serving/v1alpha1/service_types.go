@@ -100,6 +100,24 @@ type ServiceStatus struct {
 	// +optional
 	Conditions []ServiceCondition `json:"conditions,omitempty"`
 
+	// Copied from ConfigurationStatus.
+	// LatestReadyRevisionName holds the name of the latest Revision stamped out
+	// from this Service's Configuration that has had its "Ready" condition become "True".
+	// +optional
+	LatestReadyRevisionName string `json:"latestReadyRevisionName,omitempty"`
+
+	// Copied from ConfigurationStatus.
+	// LatestCreatedRevisionName is the last revision that was created from this
+	// Service's Configuration. It might not be ready yet, for that use LatestReadyRevisionName.
+	// +optional
+	LatestCreatedRevisionName string `json:"latestCreatedRevisionName,omitempty"`
+
+	// Copied from RouteStatus.
+	// Domain holds the top-level domain that will distribute traffic over the provided targets.
+	// It generally has the form {route-name}.{route-namespace}.{cluster-level-suffix}
+	// +optional
+	Domain string `json:"domain,omitempty"`
+
 	// ObservedGeneration is the 'Generation' of the Service that
 	// was last processed by the controller.
 	// +optional

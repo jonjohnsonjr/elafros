@@ -154,7 +154,8 @@ func (c *Controller) updateServiceEvent(key string) error {
 	logger.Infof("Running reconcile Service for %s\n%+v\n", service.Name, service)
 
 	config := MakeServiceConfiguration(service)
-	if err := c.reconcileConfiguration(config); err != nil {
+	config, err = c.reconcileConfiguration(config)
+	if err != nil {
 		logger.Errorf("Failed to update Configuration for %q: %v", service.Name, err)
 		return err
 	}
@@ -163,7 +164,8 @@ func (c *Controller) updateServiceEvent(key string) error {
 	// switching routes to it. Though route controller might just do the right thing?
 
 	route := MakeServiceRoute(service, config.Name)
-	if err := c.reconcileRoute(route); err != nil {
+	route, err = c.reconcileRoute(route)
+	if err != nil {
 		logger.Errorf("Failed to update Route for %q: %v", service.Name, err)
 		return err
 	}
@@ -172,6 +174,11 @@ func (c *Controller) updateServiceEvent(key string) error {
 	// we just reconciled against so we don't keep generating Revisions.
 	// TODO(#642): Remove this.
 	service.Status.ObservedGeneration = service.Spec.Generation
+
+	// Update our status based on the statuses of our Configuration and Route.
+	service.Status.LatestReadyRevisionName = config.Status.LatestReadyRevisionName
+	service.Status.LatestCreatedRevisionName = config.Status.LatestCreatedRevisionName
+	service.Status.Domain = route.Status.Domain
 
 	logger.Infof("Updating the Service status:\n%+v", service)
 
@@ -198,38 +205,38 @@ func (c *Controller) updateStatus(service *v1alpha1.Service) (*v1alpha1.Service,
 	return existing, nil
 }
 
-func (c *Controller) reconcileConfiguration(config *v1alpha1.Configuration) error {
+func (c *Controller) reconcileConfiguration(config *v1alpha1.Configuration) (*v1alpha1.Configuration, error) {
 	configClient := c.ElaClientSet.ServingV1alpha1().Configurations(config.Namespace)
 
 	existing, err := configClient.Get(config.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrs.IsNotFound(err) {
 			_, err := configClient.Create(config)
-			return err
+			return nil, err
 		}
-		return err
+		return nil, err
 	}
 	// TODO(vaikas): Perhaps only update if there are actual changes.
 	copy := existing.DeepCopy()
 	copy.Spec = config.Spec
-	_, err = configClient.Update(copy)
-	return err
+
+	return configClient.Update(copy)
 }
 
-func (c *Controller) reconcileRoute(route *v1alpha1.Route) error {
+func (c *Controller) reconcileRoute(route *v1alpha1.Route) (*v1alpha1.Route, error) {
 	routeClient := c.ElaClientSet.ServingV1alpha1().Routes(route.Namespace)
 
 	existing, err := routeClient.Get(route.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrs.IsNotFound(err) {
 			_, err := routeClient.Create(route)
-			return err
+			return nil, err
 		}
-		return err
+		return nil, err
 	}
 	// TODO(vaikas): Perhaps only update if there are actual changes.
 	copy := existing.DeepCopy()
 	copy.Spec = route.Spec
-	_, err = routeClient.Update(copy)
-	return err
+
+	return routeClient.Update(copy)
 }
