@@ -371,6 +371,21 @@ func TestRouteUnknownPropagation(t *testing.T) {
 	checkConditionSucceededService(svc.Status, ServiceConditionConfigurationReady, t)
 }
 
+func TestResourceAlreadyExistsCondition(t *testing.T) {
+	svc := &Service{}
+	svc.Status.InitializeConditions()
+	checkConditionOngoingService(svc.Status, ServiceConditionReady, t)
+	checkConditionOngoingService(svc.Status, ServiceConditionConfigurationReady, t)
+	checkConditionOngoingService(svc.Status, ServiceConditionRouteReady, t)
+
+	// Setting an existing resource conflict condition should mark Service failed.
+	svc.Status.MarkResourceAlreadyExists("Configuration", "We didn't create this")
+
+	checkConditionFailedService(svc.Status, ServiceConditionReady, t)
+	checkConditionOngoingService(svc.Status, ServiceConditionConfigurationReady, t)
+	checkConditionOngoingService(svc.Status, ServiceConditionRouteReady, t)
+}
+
 func checkConditionSucceededService(rs ServiceStatus, rct ServiceConditionType, t *testing.T) *ServiceCondition {
 	t.Helper()
 	return checkConditionService(rs, rct, corev1.ConditionTrue, t)
