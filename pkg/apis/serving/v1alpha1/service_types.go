@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -266,5 +267,15 @@ func (ss *ServiceStatus) markReady() {
 	ss.setCondition(&ServiceCondition{
 		Type:   ServiceConditionReady,
 		Status: corev1.ConditionTrue,
+	})
+}
+
+// TODO(reviewer): Bikeshed these names, please.
+func (ss *ServiceStatus) MarkResourceAlreadyExists(kind, message string) {
+	ss.setCondition(&ServiceCondition{
+		Type:    ServiceConditionReady,
+		Status:  corev1.ConditionFalse,
+		Reason:  fmt.Sprintf("%sAlreadyExists", kind),
+		Message: message,
 	})
 }

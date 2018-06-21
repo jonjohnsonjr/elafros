@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
@@ -212,6 +213,11 @@ func (c *Controller) createConfiguration(service *v1alpha1.Service) (*v1alpha1.C
 
 func (c *Controller) reconcileConfiguration(service *v1alpha1.Service, config *v1alpha1.Configuration) (*v1alpha1.Configuration, error) {
 	logger := loggerWithServiceInfo(c.Logger, service.Namespace, service.Name)
+
+	if err := checkOwner(service, "Configuration", config.GetObjectMeta()); err != nil {
+		return nil, err
+	}
+
 	desiredConfig, err := MakeServiceConfiguration(service)
 	if err != nil {
 		return nil, err
@@ -237,6 +243,11 @@ func (c *Controller) createRoute(service *v1alpha1.Service) (*v1alpha1.Route, er
 
 func (c *Controller) reconcileRoute(service *v1alpha1.Service, route *v1alpha1.Route) (*v1alpha1.Route, error) {
 	logger := loggerWithServiceInfo(c.Logger, service.Namespace, service.Name)
+
+	if err := checkOwner(service, "Route", route.GetObjectMeta()); err != nil {
+		return nil, err
+	}
+
 	desiredRoute := MakeServiceRoute(service)
 
 	// TODO(#642): Remove this (needed to avoid continuous updates)
@@ -251,4 +262,28 @@ func (c *Controller) reconcileRoute(service *v1alpha1.Service, route *v1alpha1.R
 	// Preserve the rest of the object (e.g. ObjectMeta)
 	route.Spec = desiredRoute.Spec
 	return c.ServingClientSet.ServingV1alpha1().Routes(service.Namespace).Update(route)
+}
+
+// If a Route or Configuration already exists with the same name as us, we expect to be its owner.
+//
+// If that is not the case, it's possible that:
+//	1. A user had previously created the Route/Configuration with a conflicting name.
+//	2. We are somehow in an unexpected state.
+//
+// Either way, we want to surface an error condition rather than overwriting the existing object.
+func checkOwner(service *v1alpha1.Service, kind string, obj metav1.Object) error {
+	// TODO(reviewer): Shouild I just use metav1.IsControlledBy and collapse these two into one err?
+	//
+	// Is it meaningful to distinguish between UID as well? If a previous Service of the same name owned
+	// this object, should we just adopt it?
+	owner := metav1.GetControllerOf(obj)
+	if owner == nil {
+		service.Status.MarkResourceAlreadyExists(kind, fmt.Sprintf("%s %q already exists with no owner.", kind, obj.GetName()))
+		return fmt.Errorf("Failed to reconcile %s, missing owner: want %q", kind, service.Name)
+	}
+	if owner.Name != service.Name {
+		service.Status.MarkResourceAlreadyExists(kind, fmt.Sprintf("%s %q already exists with unexpected owner %q.", kind, obj.GetName(), owner.Name))
+		return fmt.Errorf("Failed to reconcile %s, unexpected owner: want %q, got %q", kind, service.Name, owner.Name)
+	}
+	return nil
 }
