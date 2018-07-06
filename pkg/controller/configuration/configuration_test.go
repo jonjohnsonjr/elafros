@@ -307,11 +307,15 @@ func TestReconcile(t *testing.T) {
 		Key: "foo/update-config-failure",
 	}}
 
-	table.Test(t, func(listers *Listers, opt controller.Options) controller.Interface {
+	table.Test(t, func(listers *Listers, opt controller.Options) controller.Reconciler {
+		logger := opt.LoggerForController(controllerAgentName)
 		return &Controller{
-			Base:                controller.NewBase(opt, controllerAgentName, "Configurations"),
 			configurationLister: listers.GetConfigurationLister(),
 			revisionLister:      listers.GetRevisionLister(),
+			ServingClientSet:    opt.ServingClientSet,
+			BuildClientSet:      opt.BuildClientSet,
+			Logger:              logger,
+			Recorder:            opt.NewRecorder(logger, controllerAgentName),
 		}
 	})
 }
