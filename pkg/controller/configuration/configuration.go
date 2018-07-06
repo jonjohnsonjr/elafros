@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"reflect"
 
+	buildclientset "github.com/knative/build/pkg/client/clientset/versioned"
 	"github.com/knative/serving/pkg/apis/serving/v1alpha1"
+	clientset "github.com/knative/serving/pkg/client/clientset/versioned"
 	servinginformers "github.com/knative/serving/pkg/client/informers/externalversions/serving/v1alpha1"
 	listers "github.com/knative/serving/pkg/client/listers/serving/v1alpha1"
 	"github.com/knative/serving/pkg/controller"
@@ -35,17 +37,24 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/record"
 )
 
 const controllerAgentName = "configuration-controller"
 
 // Controller implements the controller for Configuration resources
+// TODO(jonjohnsonjr): Make everything private.  I am leaving some of these
+// public for now to make the diff easier to read.
 type Controller struct {
-	*controller.Base
-
 	// listers index properties about resources
 	configurationLister listers.ConfigurationLister
 	revisionLister      listers.RevisionLister
+
+	ServingClientSet clientset.Interface
+	BuildClientSet   buildclientset.Interface
+
+	Logger   *zap.SugaredLogger
+	Recorder record.EventRecorder
 }
 
 // NewController creates a new Configuration controller
@@ -53,15 +62,23 @@ func NewController(
 	opt controller.Options,
 	configurationInformer servinginformers.ConfigurationInformer,
 	revisionInformer servinginformers.RevisionInformer,
-) *Controller {
+) *controller.Controller {
+	// Enrich the logs with controller name
+	logger := controller.NewLogger(opt.Logger, controllerAgentName)
+	recorder := controller.NewRecorder(logger, opt.KubeClientSet, controllerAgentName)
 
-	c := &Controller{
-		Base:                controller.NewBase(opt, controllerAgentName, "Configurations"),
+	reconciler := &Controller{
 		configurationLister: configurationInformer.Lister(),
 		revisionLister:      revisionInformer.Lister(),
+		ServingClientSet:    opt.ServingClientSet,
+		BuildClientSet:      opt.BuildClientSet,
+		Logger:              logger,
+		Recorder:            recorder,
 	}
 
-	c.Logger.Info("Setting up event handlers")
+	c := controller.New(opt, reconciler, logger, recorder, "Configurations")
+
+	logger.Info("Setting up event handlers")
 	configurationInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.Enqueue,
 		UpdateFunc: controller.PassNew(c.Enqueue),
@@ -75,19 +92,17 @@ func NewController(
 			UpdateFunc: controller.PassNew(c.EnqueueControllerOf),
 		},
 	})
-	return c
-}
 
-// Run starts the controller's worker threads, the number of which is threadiness. It then blocks until stopCh
-// is closed, at which point it shuts down its internal work queue and waits for workers to finish processing their
-// current work items.
-func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) error {
-	return c.RunController(threadiness, stopCh, c.Reconcile, "Configuration")
+	return c
 }
 
 // loggerWithConfigInfo enriches the logs with configuration name and namespace.
 func loggerWithConfigInfo(logger *zap.SugaredLogger, ns string, name string) *zap.SugaredLogger {
 	return logger.With(zap.String(logkey.Namespace, ns), zap.String(logkey.Configuration, name))
+}
+
+func (c *Controller) Name() string {
+	return "Configuration"
 }
 
 // Reconcile compares the actual state with the desired, and attempts to

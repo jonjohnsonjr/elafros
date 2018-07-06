@@ -78,9 +78,22 @@ func Filter(kind string) func(obj interface{}) bool {
 	}
 }
 
-// Base implements most of the boilerplate and common code
+type Reconciler interface {
+	// Renoncile does a full level-based reconciliation for a resource by
+	// converging the actual state to the desired state, updating its
+	// status afterwards.
+	Reconcile(key string) error
+
+	// TODO: Remove this (helpful for refactoring in the moment.
+	Name() string
+}
+
+// Controller implements most of the boilerplate and common code
 // we have in our controllers.
-type Base struct {
+type Controller struct {
+	// Reconciler does reconciliation for a given resource.
+	Reconciler Reconciler
+
 	// KubeClientSet allows us to talk to the k8s for core APIs
 	KubeClientSet kubernetes.Interface
 
@@ -112,7 +125,7 @@ type Base struct {
 	Logger *zap.SugaredLogger
 }
 
-// Options defines the common controller options passed to NewBase.
+// Options defines the common controller options passed to New.
 // We define this to reduce the boilerplate argument list when
 // creating derivative controllers.
 type Options struct {
@@ -123,22 +136,23 @@ type Options struct {
 	Logger           *zap.SugaredLogger
 }
 
-// NewBase instantiates a new instance of Base implementing
-// the common & boilerplate code between our controllers.
-func NewBase(opt Options, controllerAgentName, workQueueName string) *Base {
+func NewLogger(logger *zap.SugaredLogger, controllerAgentName string) *zap.SugaredLogger {
+	return logger.Named(controllerAgentName).With(zap.String(logkey.ControllerType, controllerAgentName))
+}
 
-	// Enrich the logs with controller name
-	logger := opt.Logger.Named(controllerAgentName).With(zap.String(logkey.ControllerType, controllerAgentName))
-
-	// Create event broadcaster
+func NewRecorder(logger *zap.SugaredLogger, kubeClient kubernetes.Interface, controllerAgentName string) record.EventRecorder {
 	logger.Debug("Creating event broadcaster")
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartLogging(logger.Named("event-broadcaster").Infof)
-	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: opt.KubeClientSet.CoreV1().Events("")})
-	recorder := eventBroadcaster.NewRecorder(
-		scheme.Scheme, corev1.EventSource{Component: controllerAgentName})
+	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeClient.CoreV1().Events("")})
+	return eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: controllerAgentName})
+}
 
-	base := &Base{
+// New instantiates a new instance of Controller implementing
+// the common & boilerplate code between our controllers.
+func New(opt Options, reconciler Reconciler, logger *zap.SugaredLogger, recorder record.EventRecorder, workQueueName string) *Controller {
+	base := &Controller{
+		Reconciler:       reconciler,
 		KubeClientSet:    opt.KubeClientSet,
 		ServingClientSet: opt.ServingClientSet,
 		BuildClientSet:   opt.BuildClientSet,
@@ -153,7 +167,7 @@ func NewBase(opt Options, controllerAgentName, workQueueName string) *Base {
 
 // Enqueue takes a resource and converts it into a
 // namespace/name string which is then put onto the work queue.
-func (c *Base) Enqueue(obj interface{}) {
+func (c *Controller) Enqueue(obj interface{}) {
 	var key string
 	var err error
 	if key, err = cache.DeletionHandlingMetaNamespaceKeyFunc(obj); err != nil {
@@ -165,7 +179,7 @@ func (c *Base) Enqueue(obj interface{}) {
 
 // EnqueueControllerOf takes a resource, identifies its controller resource, and
 // converts it into a namespace/name string which is then put onto the work queue.
-func (c *Base) EnqueueControllerOf(obj interface{}) {
+func (c *Controller) EnqueueControllerOf(obj interface{}) {
 	// TODO(mattmoor): This will not properly handle Delete, which we do
 	// not currently use.  Consider using "cache.DeletedFinalStateUnknown"
 	// to enqueue the last known owner.
@@ -183,30 +197,30 @@ func (c *Base) EnqueueControllerOf(obj interface{}) {
 }
 
 // EnqueueKey takes a namespace/name string and puts it onto the work queue.
-func (c *Base) EnqueueKey(key string) {
+func (c *Controller) EnqueueKey(key string) {
 	c.WorkQueue.AddRateLimited(key)
 }
 
-// RunController starts the controller's worker threads, the number of which is threadiness. It then blocks until stopCh
+func (c *Controller) Reconcile(key string) error {
+	return c.Reconciler.Reconcile(key)
+}
+
+// Run starts the controller's worker threads, the number of which is threadiness. It then blocks until stopCh
 // is closed, at which point it shuts down its internal work queue and waits for workers to finish processing their
 // current work items.
-func (c *Base) RunController(
-	threadiness int,
-	stopCh <-chan struct{},
-	syncHandler func(string) error,
-	controllerName string) error {
+func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) error {
 
 	defer runtime.HandleCrash()
 	defer c.WorkQueue.ShutDown()
 
 	logger := c.Logger
-	logger.Infof("Starting %s controller", controllerName)
+	logger.Infof("Starting %s controller", c.Reconciler.Name())
 
 	// Launch workers to process Revision resources
 	logger.Info("Starting workers")
 	for i := 0; i < threadiness; i++ {
 		go wait.Until(func() {
-			for c.processNextWorkItem(syncHandler) {
+			for c.processNextWorkItem(c.Reconciler.Reconcile) {
 			}
 		}, time.Second, stopCh)
 	}
@@ -220,7 +234,7 @@ func (c *Base) RunController(
 
 // processNextWorkItem will read a single work item off the workqueue and
 // attempt to process it, by calling the syncHandler.
-func (c *Base) processNextWorkItem(syncHandler func(string) error) bool {
+func (c *Controller) processNextWorkItem(syncHandler func(string) error) bool {
 	obj, shutdown := c.WorkQueue.Get()
 
 	if shutdown {
@@ -271,7 +285,7 @@ func (c *Base) processNextWorkItem(syncHandler func(string) error) bool {
 	return true
 }
 
-// GetWorkQueue helps implement Interface for derivatives.
-func (b *Base) GetWorkQueue() workqueue.RateLimitingInterface {
+// GetWorkQueue helps testing.
+func (b *Controller) GetWorkQueue() workqueue.RateLimitingInterface {
 	return b.WorkQueue
 }

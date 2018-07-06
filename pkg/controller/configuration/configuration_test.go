@@ -383,11 +383,14 @@ func TestReconcile(t *testing.T) {
 		Key: "foo/bad-condition",
 	}}
 
-	table.Test(t, func(listers *Listers, opt controller.Options) controller.Interface {
+	table.Test(t, func(listers *Listers, opt controller.Options) controller.Reconciler {
 		return &Controller{
-			Base:                controller.NewBase(opt, controllerAgentName, "Configurations"),
 			configurationLister: listers.GetConfigurationLister(),
 			revisionLister:      listers.GetRevisionLister(),
+			ServingClientSet:    opt.ServingClientSet,
+			BuildClientSet:      opt.BuildClientSet,
+			Logger:              controller.NewLogger(opt.Logger, controllerAgentName),
+			Recorder:            controller.NewRecorder(opt.Logger, opt.KubeClientSet, controllerAgentName),
 		}
 	})
 }

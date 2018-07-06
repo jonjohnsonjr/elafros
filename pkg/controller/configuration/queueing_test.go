@@ -89,7 +89,7 @@ func getTestConfiguration() *v1alpha1.Configuration {
 func newTestController(t *testing.T, servingObjects ...runtime.Object) (
 	kubeClient *fakekubeclientset.Clientset,
 	servingClient *fakeclientset.Clientset,
-	controller *Controller,
+	controller *ctrl.Controller,
 	kubeInformer kubeinformers.SharedInformerFactory,
 	servingInformer informers.SharedInformerFactory) {
 
