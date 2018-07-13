@@ -9,4 +9,4 @@ COPY --from=bins /out/write_tables /write_tables
 COPY . /go/src/github.com/knative/serving
 WORKDIR /go/src/github.com/knative/serving
 COPY index.sh index.sh
-RUN chmod +x index.sh && ./index.sh ./...
+CMD ["./index.sh", "./..."]
