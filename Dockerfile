@@ -3,7 +3,7 @@ FROM gcr.io/jonjohnson-test/kythe/bins as bins
 FROM gcr.io/jonjohnson-test/kythe/dist as dist
 
 # Final image, serves the index via web ui
-FROM scratch
+FROM gcr.io/distroless/cc
 COPY --from=dist /src/kythe/web/ui/resources/public /public
 COPY --from=bins /out/http_server /http_server
 EXPOSE 8080
