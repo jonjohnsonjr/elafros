@@ -21,4 +21,4 @@ go install -i "${all_packages[@]}"
 packages=($(go list -f $'{{.ImportPath}}\n{{ join .Imports "\\n" }}' "$@" | sort -u))
 /gotool --corpus="GOPATH" --goroot="$(go env GOROOT)" --output=/tmp/out.kzip --continue "${packages[@]}"
 /go_indexer --continue /tmp/out.kzip > /tmp/out.entries
-/write_tables --experimental_beam_pipeline --entries /tmp/out.entries --out /tmp/out
+/write_tables --experimental_beam_pipeline --entries /tmp/out.entries --out /workspace/index
