@@ -4,7 +4,7 @@ FROM gcr.io/jonjohnson-test/kythe/dist as dist
 FROM gcr.io/jonjohnson-test/kythe/indexer as indexer
 
 # Final image, serves the index via web ui
-FROM ubuntu
+FROM scratch
 COPY --from=dist /src/kythe/web/ui/resources/public /public
 COPY --from=bins /out/http_server /http_server
 COPY --from=indexer /tmp/out /index
