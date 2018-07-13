@@ -16,7 +16,7 @@
 set -x
 go get -d "$@"
 packages=($(go list "$@"))
-all_packages=($(go list -f $'{{.ImportPath}}\n{{join .Deps "\\n"}}' "$@" | sort -u))
+all_packages=($(go list -f $'{{.ImportPath}}\n{{join .Deps "\\n"}}\n{{join .TestImports "\\n"}}' "$@" | sort -u))
 go install -i "${all_packages[@]}"
 packages=($(go list -f $'{{.ImportPath}}\n{{ join .Imports "\\n" }}' "$@" | sort -u))
 /gotool --corpus="GOPATH" --goroot="$(go env GOROOT)" --output=/tmp/out.kzip --continue "${packages[@]}"
