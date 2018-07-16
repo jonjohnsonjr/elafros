@@ -1,6 +1,6 @@
 steps:
 # Index the code.
-- name: "gcr.io/jonjohnson-test/kythe/indexer"
+- name: "gcr.io/$PROJECT_ID/kythe/indexer"
 
 # Build the webserver.
 - name: "gcr.io/cloud-builders/docker"
