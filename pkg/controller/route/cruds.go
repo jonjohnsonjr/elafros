@@ -31,28 +31,28 @@ import (
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 )
 
-func (c *Controller) reconcileVirtualService(ctx context.Context, route *v1alpha1.Route,
+func (r *Reconciler) reconcileVirtualService(ctx context.Context, route *v1alpha1.Route,
 	desiredVirtualService *v1alpha3.VirtualService) error {
 	logger := logging.FromContext(ctx)
 	ns := desiredVirtualService.Namespace
 	name := desiredVirtualService.Name
 
-	virtualService, err := c.virtualServiceLister.VirtualServices(ns).Get(name)
+	virtualService, err := r.virtualServiceLister.VirtualServices(ns).Get(name)
 	if apierrs.IsNotFound(err) {
-		virtualService, err = c.ServingClientSet.NetworkingV1alpha3().VirtualServices(ns).Create(desiredVirtualService)
+		virtualService, err = r.ServingClientSet.NetworkingV1alpha3().VirtualServices(ns).Create(desiredVirtualService)
 		if err != nil {
 			logger.Error("Failed to create VirtualService", zap.Error(err))
-			c.Recorder.Eventf(route, corev1.EventTypeWarning, "CreationFailed",
+			r.Recorder.Eventf(route, corev1.EventTypeWarning, "CreationFailed",
 				"Failed to create VirtualService %q: %v", name, err)
 			return err
 		}
-		c.Recorder.Eventf(route, corev1.EventTypeNormal, "Created",
+		r.Recorder.Eventf(route, corev1.EventTypeNormal, "Created",
 			"Created VirtualService %q", desiredVirtualService.Name)
 	} else if err != nil {
 		return err
 	} else if !equality.Semantic.DeepEqual(virtualService.Spec, desiredVirtualService.Spec) {
 		virtualService.Spec = desiredVirtualService.Spec
-		virtualService, err = c.ServingClientSet.NetworkingV1alpha3().VirtualServices(ns).Update(virtualService)
+		virtualService, err = r.ServingClientSet.NetworkingV1alpha3().VirtualServices(ns).Update(virtualService)
 		if err != nil {
 			logger.Error("Failed to update VirtualService", zap.Error(err))
 			return err
@@ -64,25 +64,25 @@ func (c *Controller) reconcileVirtualService(ctx context.Context, route *v1alpha
 	return err
 }
 
-func (c *Controller) reconcilePlaceholderService(ctx context.Context, route *v1alpha1.Route) error {
+func (r *Reconciler) reconcilePlaceholderService(ctx context.Context, route *v1alpha1.Route) error {
 	logger := logging.FromContext(ctx)
 	ns := route.Namespace
 	name := resourcenames.K8sService(route)
 
-	service, err := c.serviceLister.Services(ns).Get(name)
+	service, err := r.serviceLister.Services(ns).Get(name)
 	if apierrs.IsNotFound(err) {
 		// Doesn't exist, create it.
 		desiredService := resources.MakeK8sService(route)
-		service, err = c.KubeClientSet.CoreV1().Services(route.Namespace).Create(desiredService)
+		service, err = r.KubeClientSet.CoreV1().Services(route.Namespace).Create(desiredService)
 		if err != nil {
 			logger.Error("Failed to create service", zap.Error(err))
-			c.Recorder.Eventf(route, corev1.EventTypeWarning, "CreationFailed",
+			r.Recorder.Eventf(route, corev1.EventTypeWarning, "CreationFailed",
 				"Failed to create service %q: %v", name, err)
 			return err
 		}
 		logger.Infof("Created service %s", name)
 		route.Status.DomainInternal = resourcenames.K8sServiceFullname(route)
-		c.Recorder.Eventf(route, corev1.EventTypeNormal, "Created", "Created service %q", name)
+		r.Recorder.Eventf(route, corev1.EventTypeNormal, "Created", "Created service %q", name)
 	} else if err != nil {
 		return err
 	} else {
@@ -92,7 +92,7 @@ func (c *Controller) reconcilePlaceholderService(ctx context.Context, route *v1a
 		desiredService.Spec.ClusterIP = service.Spec.ClusterIP
 		if !equality.Semantic.DeepEqual(service.Spec, desiredService.Spec) {
 			service.Spec = desiredService.Spec
-			service, err = c.KubeClientSet.CoreV1().Services(ns).Update(service)
+			service, err = r.KubeClientSet.CoreV1().Services(ns).Update(service)
 			if err != nil {
 				return err
 			}
@@ -106,8 +106,8 @@ func (c *Controller) reconcilePlaceholderService(ctx context.Context, route *v1a
 
 // Update the Status of the route.  Caller is responsible for checking
 // for semantic differences before calling.
-func (c *Controller) updateStatus(ctx context.Context, route *v1alpha1.Route) (*v1alpha1.Route, error) {
-	existing, err := c.routeLister.Routes(route.Namespace).Get(route.Name)
+func (r *Reconciler) updateStatus(ctx context.Context, route *v1alpha1.Route) (*v1alpha1.Route, error) {
+	existing, err := r.routeLister.Routes(route.Namespace).Get(route.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -117,11 +117,11 @@ func (c *Controller) updateStatus(ctx context.Context, route *v1alpha1.Route) (*
 	}
 	existing.Status = route.Status
 	// TODO: for CRD there's no updatestatus, so use normal update.
-	updated, err := c.ServingClientSet.ServingV1alpha1().Routes(route.Namespace).Update(existing)
+	updated, err := r.ServingClientSet.ServingV1alpha1().Routes(route.Namespace).Update(existing)
 	if err != nil {
 		return nil, err
 	}
 
-	c.Recorder.Eventf(route, corev1.EventTypeNormal, "Updated", "Updated status for route %q", route.Name)
+	r.Recorder.Eventf(route, corev1.EventTypeNormal, "Updated", "Updated status for route %q", route.Name)
 	return updated, nil
 }

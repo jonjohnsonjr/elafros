@@ -309,7 +309,7 @@ func TestReconcile(t *testing.T) {
 
 	table.Test(t, func(listers *Listers, opt controller.Options) controller.Reconciler {
 		logger := opt.LoggerForController(controllerAgentName)
-		return &Controller{
+		return &Reconciler{
 			configurationLister: listers.GetConfigurationLister(),
 			revisionLister:      listers.GetRevisionLister(),
 			ServingClientSet:    opt.ServingClientSet,

@@ -46,7 +46,7 @@ const controllerAgentName = "configuration-controller"
 // TODO(jonjohnsonjr): Make everything private.  I am leaving some of these
 // public for now to make the diff easier to read.
 // TODO(jonjohnsonjr): Make Controller struct private.
-type Controller struct {
+type Reconciler struct {
 	// listers index properties about resources
 	configurationLister listers.ConfigurationLister
 	revisionLister      listers.RevisionLister
@@ -68,7 +68,7 @@ func NewController(
 	logger := opt.LoggerForController(controllerAgentName)
 	recorder := opt.NewRecorder(logger, controllerAgentName)
 
-	reconciler := &Controller{
+	reconciler := &Reconciler{
 		configurationLister: configurationInformer.Lister(),
 		revisionLister:      revisionInformer.Lister(),
 		ServingClientSet:    opt.ServingClientSet,
@@ -102,14 +102,14 @@ func loggerWithConfigInfo(logger *zap.SugaredLogger, ns string, name string) *za
 	return logger.With(zap.String(logkey.Namespace, ns), zap.String(logkey.Configuration, name))
 }
 
-func (c *Controller) Name() string {
+func (r *Reconciler) Name() string {
 	return "Configuration"
 }
 
 // Reconcile compares the actual state with the desired, and attempts to
 // converge the two. It then updates the Status block of the Configuration
 // resource with the current status of the resource.
-func (c *Controller) Reconcile(key string) error {
+func (r *Reconciler) Reconcile(key string) error {
 	// Convert the namespace/name string into a distinct namespace and name
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
@@ -117,11 +117,11 @@ func (c *Controller) Reconcile(key string) error {
 		return nil
 	}
 	// Wrap our logger with the additional context of the configuration that we are reconciling.
-	logger := loggerWithConfigInfo(c.Logger, namespace, name)
+	logger := loggerWithConfigInfo(r.Logger, namespace, name)
 	ctx := logging.WithLogger(context.TODO(), logger)
 
 	// Get the Configuration resource with this namespace/name
-	original, err := c.configurationLister.Configurations(namespace).Get(name)
+	original, err := r.configurationLister.Configurations(namespace).Get(name)
 	if errors.IsNotFound(err) {
 		// The resource no longer exists, in which case we stop processing.
 		runtime.HandleError(fmt.Errorf("configuration %q in work queue no longer exists", key))
@@ -135,31 +135,31 @@ func (c *Controller) Reconcile(key string) error {
 
 	// Reconcile this copy of the configuration and then write back any status
 	// updates regardless of whether the reconciliation errored out.
-	err = c.reconcile(ctx, config)
+	err = r.reconcile(ctx, config)
 	if equality.Semantic.DeepEqual(original.Status, config.Status) {
 		// If we didn't change anything then don't call updateStatus.
 		// This is important because the copy we loaded from the informer's
 		// cache may be stale and we don't want to overwrite a prior update
 		// to status with this stale state.
-	} else if _, err := c.updateStatus(config); err != nil {
+	} else if _, err := r.updateStatus(config); err != nil {
 		logger.Warn("Failed to update configuration status", zap.Error(err))
 		return err
 	}
 	return err
 }
 
-func (c *Controller) reconcile(ctx context.Context, config *v1alpha1.Configuration) error {
+func (r *Reconciler) reconcile(ctx context.Context, config *v1alpha1.Configuration) error {
 	logger := logging.FromContext(ctx)
 	config.Status.InitializeConditions()
 
 	// First, fetch the revision that should exist for the current generation
 	revName := resourcenames.Revision(config)
-	latestCreatedRevision, err := c.revisionLister.Revisions(config.Namespace).Get(revName)
+	latestCreatedRevision, err := r.revisionLister.Revisions(config.Namespace).Get(revName)
 	if errors.IsNotFound(err) {
-		latestCreatedRevision, err = c.createRevision(config, revName)
+		latestCreatedRevision, err = r.createRevision(config, revName)
 		if err != nil {
 			logger.Errorf("Failed to create Revision %q: %v", revName, err)
-			c.Recorder.Eventf(config, corev1.EventTypeWarning, "CreationFailed", "Failed to create Revision %q: %v", revName, err)
+			r.Recorder.Eventf(config, corev1.EventTypeWarning, "CreationFailed", "Failed to create Revision %q: %v", revName, err)
 
 			// Mark the Configuration as not-Ready since creating
 			// its latest revision failed.
@@ -189,13 +189,13 @@ func (c *Controller) reconcile(ctx context.Context, config *v1alpha1.Configurati
 		created, ready := config.Status.LatestCreatedRevisionName, config.Status.LatestReadyRevisionName
 		if ready == "" {
 			// Surface an event for the first revision becoming ready.
-			c.Recorder.Eventf(config, corev1.EventTypeNormal, "ConfigurationReady",
+			r.Recorder.Eventf(config, corev1.EventTypeNormal, "ConfigurationReady",
 				"Configuration becomes ready")
 		}
 		if created != ready {
 			// Update the LatestReadyRevisionName and surface an event for the transition.
 			config.Status.SetLatestReadyRevisionName(latestCreatedRevision.Name)
-			c.Recorder.Eventf(config, corev1.EventTypeNormal, "LatestReadyUpdate",
+			r.Recorder.Eventf(config, corev1.EventTypeNormal, "LatestReadyUpdate",
 				"LatestReadyRevisionName updated to %q", latestCreatedRevision.Name)
 		}
 
@@ -204,7 +204,7 @@ func (c *Controller) reconcile(ctx context.Context, config *v1alpha1.Configurati
 
 		// TODO(mattmoor): Only emit the event the first time we see this.
 		config.Status.MarkLatestCreatedFailed(latestCreatedRevision.Name, rc.Message)
-		c.Recorder.Eventf(config, corev1.EventTypeWarning, "LatestCreatedFailed",
+		r.Recorder.Eventf(config, corev1.EventTypeWarning, "LatestCreatedFailed",
 			"Latest created revision %q has failed", latestCreatedRevision.Name)
 
 	default:
@@ -216,42 +216,42 @@ func (c *Controller) reconcile(ctx context.Context, config *v1alpha1.Configurati
 	return nil
 }
 
-func (c *Controller) createRevision(config *v1alpha1.Configuration, revName string) (*v1alpha1.Revision, error) {
-	logger := loggerWithConfigInfo(c.Logger, config.Namespace, config.Name)
+func (r *Reconciler) createRevision(config *v1alpha1.Configuration, revName string) (*v1alpha1.Revision, error) {
+	logger := loggerWithConfigInfo(r.Logger, config.Namespace, config.Name)
 
 	buildName := ""
 	if config.Spec.Build != nil {
 		// TODO(mattmoor): Determine whether we reuse the previous build.
 		build := resources.MakeBuild(config)
-		created, err := c.BuildClientSet.BuildV1alpha1().Builds(build.Namespace).Create(build)
+		created, err := r.BuildClientSet.BuildV1alpha1().Builds(build.Namespace).Create(build)
 		if err != nil {
 			return nil, err
 		}
 		logger.Infof("Created Build:\n%+v", created.Name)
-		c.Recorder.Eventf(config, corev1.EventTypeNormal, "Created", "Created Build %q", created.Name)
+		r.Recorder.Eventf(config, corev1.EventTypeNormal, "Created", "Created Build %q", created.Name)
 		buildName = created.Name
 	}
 
 	rev := resources.MakeRevision(config, buildName)
-	created, err := c.ServingClientSet.ServingV1alpha1().Revisions(config.Namespace).Create(rev)
+	created, err := r.ServingClientSet.ServingV1alpha1().Revisions(config.Namespace).Create(rev)
 	if err != nil {
 		return nil, err
 	}
-	c.Recorder.Eventf(config, corev1.EventTypeNormal, "Created", "Created Revision %q", rev.Name)
+	r.Recorder.Eventf(config, corev1.EventTypeNormal, "Created", "Created Revision %q", rev.Name)
 	logger.Infof("Created Revision:\n%+v", created)
 
 	return created, nil
 }
 
-func (c *Controller) updateStatus(u *v1alpha1.Configuration) (*v1alpha1.Configuration, error) {
-	newu, err := c.configurationLister.Configurations(u.Namespace).Get(u.Name)
+func (r *Reconciler) updateStatus(u *v1alpha1.Configuration) (*v1alpha1.Configuration, error) {
+	newu, err := r.configurationLister.Configurations(u.Namespace).Get(u.Name)
 	if err != nil {
 		return nil, err
 	}
 	if !reflect.DeepEqual(newu.Status, u.Status) {
 		newu.Status = u.Status
 		// TODO: for CRD there's no updatestatus, so use normal update
-		return c.ServingClientSet.ServingV1alpha1().Configurations(u.Namespace).Update(newu)
+		return r.ServingClientSet.ServingV1alpha1().Configurations(u.Namespace).Update(newu)
 		//	return configClient.UpdateStatus(newu)
 	}
 	return newu, nil

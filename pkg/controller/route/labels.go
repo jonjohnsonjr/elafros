@@ -30,20 +30,20 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 )
 
-func (c *Controller) syncLabels(ctx context.Context, r *v1alpha1.Route, tc *traffic.TrafficConfig) error {
-	if err := c.deleteLabelForOutsideOfGivenConfigurations(ctx, r, tc.Configurations); err != nil {
+func (r *Reconciler) syncLabels(ctx context.Context, route *v1alpha1.Route, tc *traffic.TrafficConfig) error {
+	if err := r.deleteLabelForOutsideOfGivenConfigurations(ctx, route, tc.Configurations); err != nil {
 		return err
 	}
-	if err := c.setLabelForGivenConfigurations(ctx, r, tc.Configurations); err != nil {
+	if err := r.setLabelForGivenConfigurations(ctx, route, tc.Configurations); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (c *Controller) setLabelForGivenConfigurations(
+func (r *Reconciler) setLabelForGivenConfigurations(
 	ctx context.Context, route *v1alpha1.Route, configMap map[string]*v1alpha1.Configuration) error {
 	logger := logging.FromContext(ctx)
-	configClient := c.ServingClientSet.ServingV1alpha1().Configurations(route.Namespace)
+	configClient := r.ServingClientSet.ServingV1alpha1().Configurations(route.Namespace)
 
 	names := []string{}
 
@@ -58,7 +58,7 @@ func (c *Controller) setLabelForGivenConfigurations(
 		if routeName != route.Name {
 			errMsg := fmt.Sprintf("Configuration %q is already in use by %q, and cannot be used by %q",
 				config.Name, routeName, route.Name)
-			c.Recorder.Event(route, corev1.EventTypeWarning, "ConfigurationInUse", errMsg)
+			r.Recorder.Event(route, corev1.EventTypeWarning, "ConfigurationInUse", errMsg)
 			logger.Error(errMsg)
 			return errors.New(errMsg)
 		}
@@ -84,7 +84,7 @@ func (c *Controller) setLabelForGivenConfigurations(
 	return nil
 }
 
-func (c *Controller) deleteLabelForOutsideOfGivenConfigurations(
+func (r *Reconciler) deleteLabelForOutsideOfGivenConfigurations(
 	ctx context.Context, route *v1alpha1.Route, configMap map[string]*v1alpha1.Configuration) error {
 	logger := logging.FromContext(ctx)
 	ns := route.Namespace
@@ -93,7 +93,7 @@ func (c *Controller) deleteLabelForOutsideOfGivenConfigurations(
 	if err != nil {
 		return err
 	}
-	oldConfigsList, err := c.configurationLister.Configurations(ns).List(selector)
+	oldConfigsList, err := r.configurationLister.Configurations(ns).List(selector)
 	if err != nil {
 		logger.Errorf("Failed to fetch configurations with label '%s=%s': %s",
 			serving.RouteLabelKey, route.Name, err)
@@ -104,7 +104,7 @@ func (c *Controller) deleteLabelForOutsideOfGivenConfigurations(
 	for _, config := range oldConfigsList {
 		if _, ok := configMap[config.Name]; !ok {
 			delete(config.Labels, serving.RouteLabelKey)
-			if _, err := c.ServingClientSet.ServingV1alpha1().Configurations(ns).Update(config); err != nil {
+			if _, err := r.ServingClientSet.ServingV1alpha1().Configurations(ns).Update(config); err != nil {
 				logger.Errorf("Failed to update Configuration %s: %s", config.Name, err)
 				return err
 			}
