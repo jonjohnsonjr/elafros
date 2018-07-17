@@ -725,7 +725,7 @@ func TestCreateRouteWithNamedTargets(t *testing.T) {
 	}
 }
 
-func TestEnqueueReferringRoute(t *testing.T) {
+func TestGetReferringRoute(t *testing.T) {
 	_, servingClient, controller, _, servingInformer, _ := newTestController(t)
 	routeClient := servingClient.ServingV1alpha1().Routes(testNamespace)
 
@@ -739,7 +739,7 @@ func TestEnqueueReferringRoute(t *testing.T) {
 	)
 
 	routeClient.Create(route)
-	// Since EnqueueReferringRoute looks in the lister, we need to add it to the informer
+	// Since GetReferringRoute looks in the lister, we need to add it to the informer
 	servingInformer.Serving().V1alpha1().Routes().Informer().GetIndexer().Add(route)
 
 	// Update config to have LatestReadyRevisionName and route label.
@@ -747,16 +747,19 @@ func TestEnqueueReferringRoute(t *testing.T) {
 	config.Labels = map[string]string{
 		serving.RouteLabelKey: route.Name,
 	}
-	controller.EnqueueReferringRoute(config)
-	// add this fake queue end marker.
-	controller.WorkQueue.AddRateLimited("queue-has-no-work")
-	expected := fmt.Sprintf("%s/%s", route.Namespace, route.Name)
-	if k, _ := controller.WorkQueue.Get(); k != expected {
-		t.Errorf("Expected %q, saw %q", expected, k)
+	rr := controller.GetReferringRoute(config)
+	if rr == nil {
+		t.Fatalf("expected route, got nil")
+	}
+	if want, got := route.Namespace, rr.Namespace; want != got {
+		t.Errorf("wrong Namespace: want %q, got %q", want, got)
+	}
+	if want, got := route.Name, rr.Name; want != got {
+		t.Errorf("wrong Name: want %q, got %q", want, got)
 	}
 }
 
-func TestEnqueueReferringRouteNotEnqueueIfCannotFindRoute(t *testing.T) {
+func TestGetReferringRouteNotEnqueueIfCannotFindRoute(t *testing.T) {
 	_, _, controller, _, _, _ := newTestController(t)
 
 	config := getTestConfiguration()
@@ -773,61 +776,39 @@ func TestEnqueueReferringRouteNotEnqueueIfCannotFindRoute(t *testing.T) {
 	config.Labels = map[string]string{
 		serving.RouteLabelKey: route.Name,
 	}
-	controller.EnqueueReferringRoute(config)
-	// add this item to avoid being blocked by queue.
-	expected := "queue-has-no-work"
-	controller.WorkQueue.AddRateLimited(expected)
-	if k, _ := controller.WorkQueue.Get(); k != expected {
-		t.Errorf("Expected %v, saw %v", expected, k)
+	if rr := controller.GetReferringRoute(config); rr != nil {
+		t.Errorf("want nil, got %v", rr)
 	}
 }
 
-func TestEnqueueReferringRouteNotEnqueueIfHasNoLatestReady(t *testing.T) {
+func TestGetReferringRouteNotEnqueueIfHasNoLatestReady(t *testing.T) {
 	_, _, controller, _, _, _ := newTestController(t)
 	config := getTestConfiguration()
 
-	controller.EnqueueReferringRoute(config)
-	// add this item to avoid being blocked by queue.
-	expected := "queue-has-no-work"
-	controller.WorkQueue.AddRateLimited(expected)
-	if k, _ := controller.WorkQueue.Get(); k != expected {
-		t.Errorf("Expected %v, saw %v", expected, k)
+	if rr := controller.GetReferringRoute(config); rr != nil {
+		t.Errorf("want nil, got %v", rr)
 	}
 }
 
-func TestEnqueueReferringRouteNotEnqueueIfHavingNoRouteLabel(t *testing.T) {
+func TestGetReferringRouteNotEnqueueIfHavingNoRouteLabel(t *testing.T) {
 	_, _, controller, _, _, _ := newTestController(t)
 	config := getTestConfiguration()
 	rev := getTestRevisionForConfig(config)
 	fmt.Println(rev.Name)
 	config.Status.LatestReadyRevisionName = rev.Name
 
-	if controller.WorkQueue.Len() > 0 {
-		t.Errorf("Expecting no route sync work prior to config change")
-	}
-	controller.EnqueueReferringRoute(config)
-	// add this item to avoid being blocked by queue.
-	expected := "queue-has-no-work"
-	controller.WorkQueue.AddRateLimited(expected)
-	if k, _ := controller.WorkQueue.Get(); k != expected {
-		t.Errorf("Expected %v, saw %v", expected, k)
+	if rr := controller.GetReferringRoute(config); rr != nil {
+		t.Errorf("want nil, got %v", rr)
 	}
 }
 
-func TestEnqueueReferringRouteNotEnqueueIfNotGivenAConfig(t *testing.T) {
+func TestGetReferringRouteNotEnqueueIfNotGivenAConfig(t *testing.T) {
 	_, _, controller, _, _, _ := newTestController(t)
 	config := getTestConfiguration()
 	rev := getTestRevisionForConfig(config)
 
-	if controller.WorkQueue.Len() > 0 {
-		t.Errorf("Expecting no route sync work prior to config change")
-	}
-	controller.EnqueueReferringRoute(rev)
-	// add this item to avoid being blocked by queue.
-	expected := "queue-has-no-work"
-	controller.WorkQueue.AddRateLimited(expected)
-	if k, _ := controller.WorkQueue.Get(); k != expected {
-		t.Errorf("Expected %v, saw %v", expected, k)
+	if rr := controller.GetReferringRoute(rev); rr != nil {
+		t.Errorf("want nil, got %v", rr)
 	}
 }
 

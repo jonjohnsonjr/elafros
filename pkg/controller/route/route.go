@@ -98,8 +98,8 @@ func NewController(
 	})
 
 	configInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    c.EnqueueReferringRoute,
-		UpdateFunc: controller.PassNew(c.EnqueueReferringRoute),
+		AddFunc:    c.enqueueReferringRoute,
+		UpdateFunc: controller.PassNew(c.enqueueReferringRoute),
 	})
 
 	// TODO(mattmoor): We should Reconcile Routes when controlled Services
@@ -223,31 +223,41 @@ func (c *Controller) configureTraffic(ctx context.Context, r *v1alpha1.Route) (*
 	return r, nil
 }
 
-func (c *Controller) EnqueueReferringRoute(obj interface{}) {
+func (c *Controller) GetReferringRoute(obj interface{}) *v1alpha1.Route {
 	config, ok := obj.(*v1alpha1.Configuration)
 	if !ok {
 		c.Logger.Infof("Ignoring non-Configuration objects %v", obj)
-		return
+		return nil
 	}
 	if config.Status.LatestReadyRevisionName == "" {
 		fmt.Printf("Configuration %s is not ready\n", config.Name)
 		c.Logger.Infof("Configuration %s is not ready", config.Name)
-		return
+		return nil
 	}
 	// Check whether is configuration is referred by a route.
 	routeName, ok := config.Labels[serving.RouteLabelKey]
 	if !ok {
 		c.Logger.Infof("Configuration %s does not have a referring route", config.Name)
-		return
+		return nil
 	}
 	// Configuration is referred by a Route.  Update such Route.
 	route, err := c.routeLister.Routes(config.Namespace).Get(routeName)
 	if err != nil {
+		// In order to annotate the logs better, we don't just return an error here.
 		loggerWithRouteInfo(c.Logger, config.Namespace, routeName).Error(
 			"Error fetching route upon configuration becoming ready", zap.Error(err))
-		return
+		return nil
 	}
-	c.Enqueue(route)
+
+	return route
+}
+
+func (c *Controller) enqueueReferringRoute(obj interface{}) {
+	route := c.GetReferringRoute(obj)
+
+	if route != nil {
+		c.Enqueue(route)
+	}
 }
 
 /////////////////////////////////////////
