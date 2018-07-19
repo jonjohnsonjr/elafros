@@ -29,7 +29,7 @@ import (
 )
 
 func TestReconcileVirtualService_Insert(t *testing.T) {
-	_, servingClient, c, _, _, _ := newTestController(t)
+	_, servingClient, c, _, _, _ := newTestReconciler(t)
 	r := &v1alpha1.Route{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-route",
@@ -52,7 +52,7 @@ func TestReconcileVirtualService_Insert(t *testing.T) {
 }
 
 func TestReconcileVirtualService_Update(t *testing.T) {
-	_, servingClient, c, _, servingInformer, _ := newTestController(t)
+	_, servingClient, c, _, servingInformer, _ := newTestReconciler(t)
 	r := &v1alpha1.Route{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-route",

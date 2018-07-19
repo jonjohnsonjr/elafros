@@ -1480,9 +1480,9 @@ func TestReconcile(t *testing.T) {
 	// TODO(mattmoor): Revision inactive (indirect reference)
 	// TODO(mattmoor): Multiple inactive Revisions
 
-	table.Test(t, func(listers *Listers, opt controller.Options) controller.Interface {
-		return &Controller{
-			Base:                 controller.NewBase(opt, controllerAgentName, "Routes"),
+	table.Test(t, func(listers *Listers, opt controller.Options) controller.Reconciler {
+		logger := opt.LoggerForController(controllerAgentName)
+		return &Reconciler{
 			routeLister:          listers.GetRouteLister(),
 			configurationLister:  listers.GetConfigurationLister(),
 			revisionLister:       listers.GetRevisionLister(),
@@ -1496,6 +1496,8 @@ func TestReconcile(t *testing.T) {
 					},
 				},
 			},
+			Logger:   logger,
+			Recorder: opt.NewRecorder(logger, controllerAgentName),
 		}
 	})
 }

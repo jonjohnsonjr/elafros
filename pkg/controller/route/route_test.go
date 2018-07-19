@@ -157,7 +157,7 @@ func getActivatorDestinationWeight(w int) v1alpha3.DestinationWeight {
 	}
 }
 
-func newTestController(t *testing.T, configs ...*corev1.ConfigMap) (
+func newTestReconciler(t *testing.T, configs ...*corev1.ConfigMap) (
 	kubeClient *fakekubeclientset.Clientset,
 	servingClient *fakeclientset.Clientset,
 	reconciler *Reconciler,
@@ -190,7 +190,66 @@ func newTestController(t *testing.T, configs ...*corev1.ConfigMap) (
 	kubeInformer = kubeinformers.NewSharedInformerFactory(kubeClient, 0)
 	servingInformer = informers.NewSharedInformerFactory(servingClient, 0)
 
-	reconciler = NewController(
+	opt := ctrl.Options{
+		KubeClientSet:    kubeClient,
+		ServingClientSet: servingClient,
+		ConfigMapWatcher: configMapWatcher,
+		Logger:           TestLogger(t),
+	}
+
+	// Enrich the logs with controller name
+	logger := opt.LoggerForController(controllerAgentName)
+	recorder := opt.NewRecorder(logger, controllerAgentName)
+
+	reconciler = &Reconciler{
+		routeLister:          servingInformer.Serving().V1alpha1().Routes().Lister(),
+		configurationLister:  servingInformer.Serving().V1alpha1().Configurations().Lister(),
+		revisionLister:       servingInformer.Serving().V1alpha1().Revisions().Lister(),
+		serviceLister:        kubeInformer.Core().V1().Services().Lister(),
+		virtualServiceLister: servingInformer.Networking().V1alpha3().VirtualServices().Lister(),
+		KubeClientSet:        kubeClient,
+		ServingClientSet:     servingClient,
+		Logger:               logger,
+		Recorder:             recorder,
+	}
+
+	return
+}
+
+func newTestController(t *testing.T, configs ...*corev1.ConfigMap) (
+	kubeClient *fakekubeclientset.Clientset,
+	servingClient *fakeclientset.Clientset,
+	controller *ctrl.Impl,
+	kubeInformer kubeinformers.SharedInformerFactory,
+	servingInformer informers.SharedInformerFactory,
+	configMapWatcher configmap.Watcher) {
+
+	// Create fake clients
+	kubeClient = fakekubeclientset.NewSimpleClientset()
+	var cms []*corev1.ConfigMap
+	cms = append(cms, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      config.DomainConfigName,
+			Namespace: system.Namespace,
+		},
+		Data: map[string]string{
+			defaultDomainSuffix: "",
+			prodDomainSuffix:    "selector:\n  app: prod",
+		},
+	})
+	for _, cm := range configs {
+		cms = append(cms, cm)
+	}
+
+	configMapWatcher = configmap.NewFixedWatcher(cms...)
+	servingClient = fakeclientset.NewSimpleClientset()
+
+	// Create informer factories with fake clients. The second parameter sets the
+	// resync period to zero, disabling it.
+	kubeInformer = kubeinformers.NewSharedInformerFactory(kubeClient, 0)
+	servingInformer = informers.NewSharedInformerFactory(servingClient, 0)
+
+	controller = NewController(
 		ctrl.Options{
 			KubeClientSet:    kubeClient,
 			ServingClientSet: servingClient,
@@ -726,7 +785,7 @@ func TestCreateRouteWithNamedTargets(t *testing.T) {
 }
 
 func TestGetReferringRoute(t *testing.T) {
-	_, servingClient, reconciler, _, servingInformer, _ := newTestController(t)
+	_, servingClient, reconciler, _, servingInformer, _ := newTestReconciler(t)
 	routeClient := servingClient.ServingV1alpha1().Routes(testNamespace)
 
 	config := getTestConfiguration()
@@ -760,7 +819,7 @@ func TestGetReferringRoute(t *testing.T) {
 }
 
 func TestGetReferringRouteNotEnqueueIfCannotFindRoute(t *testing.T) {
-	_, _, reconciler, _, _, _ := newTestController(t)
+	_, _, reconciler, _, _, _ := newTestReconciler(t)
 
 	config := getTestConfiguration()
 	rev := getTestRevisionForConfig(config)
@@ -782,7 +841,7 @@ func TestGetReferringRouteNotEnqueueIfCannotFindRoute(t *testing.T) {
 }
 
 func TestGetReferringRouteNotEnqueueIfHasNoLatestReady(t *testing.T) {
-	_, _, reconciler, _, _, _ := newTestController(t)
+	_, _, reconciler, _, _, _ := newTestReconciler(t)
 	config := getTestConfiguration()
 
 	if rr := reconciler.GetReferringRoute(config); rr != nil {
@@ -791,7 +850,7 @@ func TestGetReferringRouteNotEnqueueIfHasNoLatestReady(t *testing.T) {
 }
 
 func TestGetReferringRouteNotEnqueueIfHavingNoRouteLabel(t *testing.T) {
-	_, _, reconciler, _, _, _ := newTestController(t)
+	_, _, reconciler, _, _, _ := newTestReconciler(t)
 	config := getTestConfiguration()
 	rev := getTestRevisionForConfig(config)
 	fmt.Println(rev.Name)
@@ -803,7 +862,7 @@ func TestGetReferringRouteNotEnqueueIfHavingNoRouteLabel(t *testing.T) {
 }
 
 func TestGetReferringRouteNotEnqueueIfNotGivenAConfig(t *testing.T) {
-	_, _, reconciler, _, _, _ := newTestController(t)
+	_, _, reconciler, _, _, _ := newTestReconciler(t)
 	config := getTestConfiguration()
 	rev := getTestRevisionForConfig(config)
 
@@ -813,7 +872,7 @@ func TestGetReferringRouteNotEnqueueIfNotGivenAConfig(t *testing.T) {
 }
 
 func TestUpdateDomainConfigMap(t *testing.T) {
-	kubeClient, servingClient, reconciler, kubeInformer, servingInformer, _ := newTestController(t)
+	kubeClient, servingClient, reconciler, kubeInformer, servingInformer, _ := newTestReconciler(t)
 	route := getTestRouteWithTrafficTargets([]v1alpha1.TrafficTarget{})
 	routeClient := servingClient.ServingV1alpha1().Routes(route.Namespace)
 

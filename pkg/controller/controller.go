@@ -212,6 +212,7 @@ func (c *Impl) EnqueueKey(key string) {
 	c.WorkQueue.AddRateLimited(key)
 }
 
+// Make this controller impl Reconciler as well. Is that useful?
 func (c *Impl) Reconcile(key string) error {
 	return c.Reconciler.Reconcile(key)
 }
@@ -230,7 +231,7 @@ func (c *Impl) Run(threadiness int, stopCh <-chan struct{}) error {
 	logger.Info("Starting workers")
 	for i := 0; i < threadiness; i++ {
 		go wait.Until(func() {
-			for c.processNextWorkItem(c.Reconciler.Reconcile) {
+			for c.processNextWorkItem(c.Reconcile) {
 			}
 		}, time.Second, stopCh)
 	}

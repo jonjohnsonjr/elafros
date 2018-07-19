@@ -71,6 +71,7 @@ func (r *Reconciler) reconcilePlaceholderService(ctx context.Context, route *v1a
 
 	service, err := r.serviceLister.Services(ns).Get(name)
 	if apierrs.IsNotFound(err) {
+
 		// Doesn't exist, create it.
 		desiredService := resources.MakeK8sService(route)
 		service, err = r.KubeClientSet.CoreV1().Services(route.Namespace).Create(desiredService)
