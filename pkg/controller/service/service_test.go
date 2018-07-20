@@ -228,12 +228,15 @@ func TestReconcile(t *testing.T) {
 		}},
 	}}
 
-	table.Test(t, func(listers *Listers, opt controller.Options) controller.Interface {
-		return &Controller{
-			Base:                controller.NewBase(opt, controllerAgentName, "Services"),
+	table.Test(t, func(listers *Listers, opt controller.Options) controller.Reconciler {
+		logger := opt.LoggerForController(controllerAgentName)
+		return &Reconciler{
 			serviceLister:       listers.GetServiceLister(),
 			configurationLister: listers.GetConfigurationLister(),
 			routeLister:         listers.GetRouteLister(),
+			ServingClientSet:    opt.ServingClientSet,
+			Logger:              logger,
+			Recorder:            opt.NewRecorder(logger, controllerAgentName),
 		}
 	})
 }

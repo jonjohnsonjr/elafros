@@ -29,8 +29,10 @@ import (
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/record"
 
 	"github.com/knative/serving/pkg/apis/serving/v1alpha1"
+	clientset "github.com/knative/serving/pkg/client/clientset/versioned"
 	servinginformers "github.com/knative/serving/pkg/client/informers/externalversions/serving/v1alpha1"
 	listers "github.com/knative/serving/pkg/client/listers/serving/v1alpha1"
 	"github.com/knative/serving/pkg/controller"
@@ -42,14 +44,16 @@ import (
 
 const controllerAgentName = "service-controller"
 
-// Controller implements the controller for Service resources.
-type Controller struct {
-	*controller.Base
-
+type Reconciler struct {
 	// listers index properties about resources
 	serviceLister       listers.ServiceLister
 	configurationLister listers.ConfigurationLister
 	routeLister         listers.RouteLister
+
+	ServingClientSet clientset.Interface
+
+	Logger   *zap.SugaredLogger
+	Recorder record.EventRecorder
 }
 
 // NewController initializes the controller and is called by the generated code
@@ -59,16 +63,23 @@ func NewController(
 	serviceInformer servinginformers.ServiceInformer,
 	configurationInformer servinginformers.ConfigurationInformer,
 	routeInformer servinginformers.RouteInformer,
-) *Controller {
+) *controller.Impl {
+	// Enrich the logs with controller name
+	logger := opt.LoggerForController(controllerAgentName)
+	recorder := opt.NewRecorder(logger, controllerAgentName)
 
-	c := &Controller{
-		Base:                controller.NewBase(opt, controllerAgentName, "Services"),
+	reconciler := &Reconciler{
 		serviceLister:       serviceInformer.Lister(),
 		configurationLister: configurationInformer.Lister(),
 		routeLister:         routeInformer.Lister(),
+		ServingClientSet:    opt.ServingClientSet,
+		Logger:              logger,
+		Recorder:            recorder,
 	}
 
-	c.Logger.Info("Setting up event handlers")
+	c := controller.New(opt, reconciler, logger, recorder, "Services")
+
+	logger.Info("Setting up event handlers")
 	serviceInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    c.Enqueue,
 		UpdateFunc: controller.PassNew(c.Enqueue),
@@ -94,22 +105,19 @@ func NewController(
 	return c
 }
 
-// Run starts the controller's worker threads, the number of which is threadiness. It then blocks until stopCh
-// is closed, at which point it shuts down its internal work queue and waits for workers to finish processing their
-// current work items.
-func (c *Controller) Run(threadiness int, stopCh <-chan struct{}) error {
-	return c.RunController(threadiness, stopCh, c.Reconcile, "Service")
-}
-
 // loggerWithServiceInfo enriches the logs with service name and namespace.
 func loggerWithServiceInfo(logger *zap.SugaredLogger, ns string, name string) *zap.SugaredLogger {
 	return logger.With(zap.String(logkey.Namespace, ns), zap.String(logkey.Service, name))
 }
 
+func (r *Reconciler) Name() string {
+	return "Service"
+}
+
 // Reconcile compares the actual state with the desired, and attempts to
 // converge the two. It then updates the Status block of the Service resource
 // with the current status of the resource.
-func (c *Controller) Reconcile(key string) error {
+func (r *Reconciler) Reconcile(key string) error {
 	// Convert the namespace/name string into a distinct namespace and name
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
@@ -118,11 +126,11 @@ func (c *Controller) Reconcile(key string) error {
 	}
 
 	// Wrap our logger with the additional context of the configuration that we are reconciling.
-	logger := loggerWithServiceInfo(c.Logger, namespace, name)
+	logger := loggerWithServiceInfo(r.Logger, namespace, name)
 	ctx := logging.WithLogger(context.TODO(), logger)
 
 	// Get the Service resource with this namespace/name
-	original, err := c.serviceLister.Services(namespace).Get(name)
+	original, err := r.serviceLister.Services(namespace).Get(name)
 	if apierrs.IsNotFound(err) {
 		// The resource may no longer exist, in which case we stop processing.
 		runtime.HandleError(fmt.Errorf("service %q in work queue no longer exists", key))
@@ -136,36 +144,36 @@ func (c *Controller) Reconcile(key string) error {
 
 	// Reconcile this copy of the service and then write back any status
 	// updates regardless of whether the reconciliation errored out.
-	err = c.reconcile(ctx, service)
+	err = r.reconcile(ctx, service)
 	if equality.Semantic.DeepEqual(original.Status, service.Status) {
 		// If we didn't change anything then don't call updateStatus.
 		// This is important because the copy we loaded from the informer's
 		// cache may be stale and we don't want to overwrite a prior update
 		// to status with this stale state.
-	} else if _, err := c.updateStatus(service); err != nil {
+	} else if _, err := r.updateStatus(service); err != nil {
 		logger.Warn("Failed to update service status", zap.Error(err))
 		return err
 	}
 	return err
 }
 
-func (c *Controller) reconcile(ctx context.Context, service *v1alpha1.Service) error {
+func (r *Reconciler) reconcile(ctx context.Context, service *v1alpha1.Service) error {
 	logger := logging.FromContext(ctx)
 	service.Status.InitializeConditions()
 
 	configName := resourcenames.Configuration(service)
-	config, err := c.configurationLister.Configurations(service.Namespace).Get(configName)
+	config, err := r.configurationLister.Configurations(service.Namespace).Get(configName)
 	if errors.IsNotFound(err) {
-		config, err = c.createConfiguration(service)
+		config, err = r.createConfiguration(service)
 		if err != nil {
 			logger.Errorf("Failed to create Configuration %q: %v", configName, err)
-			c.Recorder.Eventf(service, corev1.EventTypeWarning, "CreationFailed", "Failed to create Configuration %q: %v", configName, err)
+			r.Recorder.Eventf(service, corev1.EventTypeWarning, "CreationFailed", "Failed to create Configuration %q: %v", configName, err)
 			return err
 		}
 	} else if err != nil {
 		logger.Errorf("Failed to reconcile Service: %q failed to Get Configuration: %q; %v", service.Name, configName, zap.Error(err))
 		return err
-	} else if config, err = c.reconcileConfiguration(service, config); err != nil {
+	} else if config, err = r.reconcileConfiguration(service, config); err != nil {
 		logger.Errorf("Failed to reconcile Service: %q failed to reconcile Configuration: %q; %v", service.Name, configName, zap.Error(err))
 		return err
 	}
@@ -174,18 +182,18 @@ func (c *Controller) reconcile(ctx context.Context, service *v1alpha1.Service) e
 	service.Status.PropagateConfigurationStatus(config.Status)
 
 	routeName := resourcenames.Route(service)
-	route, err := c.routeLister.Routes(service.Namespace).Get(routeName)
+	route, err := r.routeLister.Routes(service.Namespace).Get(routeName)
 	if errors.IsNotFound(err) {
-		route, err = c.createRoute(service)
+		route, err = r.createRoute(service)
 		if err != nil {
 			logger.Errorf("Failed to create Route %q: %v", routeName, err)
-			c.Recorder.Eventf(service, corev1.EventTypeWarning, "CreationFailed", "Failed to create Route %q: %v", routeName, err)
+			r.Recorder.Eventf(service, corev1.EventTypeWarning, "CreationFailed", "Failed to create Route %q: %v", routeName, err)
 			return err
 		}
 	} else if err != nil {
 		logger.Errorf("Failed to reconcile Service: %q failed to Get Route: %q", service.Name, routeName)
 		return err
-	} else if route, err = c.reconcileRoute(service, route); err != nil {
+	} else if route, err = r.reconcileRoute(service, route); err != nil {
 		logger.Errorf("Failed to reconcile Service: %q failed to reconcile Route: %q", service.Name, routeName)
 		return err
 	}
@@ -201,32 +209,32 @@ func (c *Controller) reconcile(ctx context.Context, service *v1alpha1.Service) e
 	return nil
 }
 
-func (c *Controller) updateStatus(service *v1alpha1.Service) (*v1alpha1.Service, error) {
-	existing, err := c.serviceLister.Services(service.Namespace).Get(service.Name)
+func (r *Reconciler) updateStatus(service *v1alpha1.Service) (*v1alpha1.Service, error) {
+	existing, err := r.serviceLister.Services(service.Namespace).Get(service.Name)
 	if err != nil {
 		return nil, err
 	}
 	// Check if there is anything to update.
 	if !reflect.DeepEqual(existing.Status, service.Status) {
 		existing.Status = service.Status
-		serviceClient := c.ServingClientSet.ServingV1alpha1().Services(service.Namespace)
+		serviceClient := r.ServingClientSet.ServingV1alpha1().Services(service.Namespace)
 		// TODO: for CRD there's no updatestatus, so use normal update.
 		return serviceClient.Update(existing)
 	}
 	return existing, nil
 }
 
-func (c *Controller) createConfiguration(service *v1alpha1.Service) (*v1alpha1.Configuration, error) {
+func (r *Reconciler) createConfiguration(service *v1alpha1.Service) (*v1alpha1.Configuration, error) {
 	cfg, err := resources.MakeConfiguration(service)
 	if err != nil {
 		return nil, err
 	}
-	return c.ServingClientSet.ServingV1alpha1().Configurations(service.Namespace).Create(cfg)
+	return r.ServingClientSet.ServingV1alpha1().Configurations(service.Namespace).Create(cfg)
 }
 
-func (c *Controller) reconcileConfiguration(service *v1alpha1.Service, config *v1alpha1.Configuration) (*v1alpha1.Configuration, error) {
+func (r *Reconciler) reconcileConfiguration(service *v1alpha1.Service, config *v1alpha1.Configuration) (*v1alpha1.Configuration, error) {
 
-	logger := loggerWithServiceInfo(c.Logger, service.Namespace, service.Name)
+	logger := loggerWithServiceInfo(r.Logger, service.Namespace, service.Name)
 	desiredConfig, err := resources.MakeConfiguration(service)
 	if err != nil {
 		return nil, err
@@ -243,15 +251,15 @@ func (c *Controller) reconcileConfiguration(service *v1alpha1.Service, config *v
 
 	// Preserve the rest of the object (e.g. ObjectMeta)
 	config.Spec = desiredConfig.Spec
-	return c.ServingClientSet.ServingV1alpha1().Configurations(service.Namespace).Update(config)
+	return r.ServingClientSet.ServingV1alpha1().Configurations(service.Namespace).Update(config)
 }
 
-func (c *Controller) createRoute(service *v1alpha1.Service) (*v1alpha1.Route, error) {
-	return c.ServingClientSet.ServingV1alpha1().Routes(service.Namespace).Create(resources.MakeRoute(service))
+func (r *Reconciler) createRoute(service *v1alpha1.Service) (*v1alpha1.Route, error) {
+	return r.ServingClientSet.ServingV1alpha1().Routes(service.Namespace).Create(resources.MakeRoute(service))
 }
 
-func (c *Controller) reconcileRoute(service *v1alpha1.Service, route *v1alpha1.Route) (*v1alpha1.Route, error) {
-	logger := loggerWithServiceInfo(c.Logger, service.Namespace, service.Name)
+func (r *Reconciler) reconcileRoute(service *v1alpha1.Service, route *v1alpha1.Route) (*v1alpha1.Route, error) {
+	logger := loggerWithServiceInfo(r.Logger, service.Namespace, service.Name)
 	desiredRoute := resources.MakeRoute(service)
 
 	// TODO(#642): Remove this (needed to avoid continuous updates)
@@ -265,5 +273,5 @@ func (c *Controller) reconcileRoute(service *v1alpha1.Service, route *v1alpha1.R
 
 	// Preserve the rest of the object (e.g. ObjectMeta)
 	route.Spec = desiredRoute.Spec
-	return c.ServingClientSet.ServingV1alpha1().Routes(service.Namespace).Update(route)
+	return r.ServingClientSet.ServingV1alpha1().Routes(service.Namespace).Update(route)
 }
